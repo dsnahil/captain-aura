@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /$
+Allow: /onboarding
+Disallow: /home
+Disallow: /aura
+Disallow: /closet
+Disallow: /profile
+Disallow: /history
+Disallow: /explore
+Disallow: /api

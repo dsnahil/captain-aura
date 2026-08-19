@@ -1,26 +1,276 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ============================================================================
+   CAPTAIN AURA — DESIGN SYSTEM
+   Light, airy, generous. White canvas, warm neutrals, one ember accent.
+   Big type, big spacing, big rounded surfaces, quiet borders.
+   ============================================================================ */
+
+@theme {
+  /* --- Neutrals (warm, not blue-grey) --- */
+  --color-canvas: #ffffff;
+  --color-surface: #f7f7f5;
+  --color-surface-2: #f0efec;
+
+  --color-ink: #1c1b1a;
+  --color-ink-soft: #6d6a66;
+  --color-ink-faint: #9d9a95;
+
+  --color-line: #e8e6e1;
+  --color-line-strong: #d6d3cc;
+
+  /* --- Accent: warm ember --- */
+  --color-ember: #bf5b34;
+  --color-ember-deep: #a44b28;
+  --color-ember-tint: #fdf1ec;
+  --color-ember-line: #f0d3c6;
+
+  /* --- Supporting --- */
+  --color-sage: #4f6b52;
+  --color-sage-tint: #eef3ee;
+
+  /* --- Type --- */
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* --- Motion --- */
+  --ease-aura: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* --- Radii: generous, Airbnb-ish --- */
+  --radius-xl2: 16px;
+  --radius-card: 20px;
+  --radius-block: 28px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  html {
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.55;
+    letter-spacing: -0.011em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  ::selection {
+    background: var(--color-ember);
+    color: #fff;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+    letter-spacing: inherit;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-ink-faint);
+  }
+
+  /* Headings: tight, confident, never shouty */
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.028em;
+    line-height: 1.1;
+    font-weight: 700;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 8px;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer components {
+  /* Big editorial page title */
+  .title {
+    font-size: clamp(2rem, 6vw, 2.75rem);
+    font-weight: 700;
+    letter-spacing: -0.035em;
+    line-height: 1.06;
+  }
+
+  /* Section label — sentence case and readable, not tiny tracked caps */
+  .section-label {
+    font-size: 1.0625rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--color-ink);
+  }
+
+  /* Quiet meta text */
+  .meta {
+    font-size: 0.875rem;
+    color: var(--color-ink-soft);
+  }
+
+  /* The workhorse surface: soft border, no heavy shadow */
+  .card {
+    background: var(--color-canvas);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+  }
+
+  /* Elevated variant for things you can tap */
+  .card-lift {
+    background: var(--color-canvas);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+    transition:
+      box-shadow 0.25s var(--ease-aura),
+      transform 0.25s var(--ease-aura),
+      border-color 0.25s var(--ease-aura);
+  }
+  .card-lift:hover {
+    border-color: var(--color-line-strong);
+    box-shadow: 0 8px 28px -14px rgba(28, 27, 26, 0.22);
+    transform: translateY(-1px);
+  }
+
+  .tinted {
+    background: var(--color-surface);
+    border-radius: var(--radius-card);
+  }
+}
+
+@layer utilities {
+  /* Expand a small link's touch target without moving anything */
+  .tap {
+    position: relative;
+  }
+  .tap::after {
+    content: "";
+    position: absolute;
+    inset: -12px -10px;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+
+  /* Horizontal scrollers that bleed to the screen edge on mobile */
+  .bleed {
+    margin-inline: calc(var(--bleed, 1.25rem) * -1);
+    padding-inline: var(--bleed, 1.25rem);
+  }
+
+  .no-bar {
+    scrollbar-width: none;
+  }
+  .no-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Entrance animations — staggered via --i */
+  .rise {
+    animation: rise 0.6s var(--ease-aura) both;
+    animation-delay: calc(var(--i, 0) * 60ms);
+  }
+  .fade {
+    animation: fade 0.7s var(--ease-aura) both;
+    animation-delay: calc(var(--i, 0) * 60ms);
+  }
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes shimmer {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(100%);
+    }
+  }
+  .shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(191, 91, 52, 0.18),
+      transparent
+    );
+    animation: shimmer 1.6s var(--ease-aura) infinite;
+  }
+
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 0.4;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.85;
+      transform: scale(1.05);
+    }
+  }
+  .breathe {
+    animation: breathe 3s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .rise,
+    .fade,
+    .shimmer::after,
+    .breathe {
+      animation: none !important;
+      opacity: 1 !important;
+      transform: none !important;
+    }
+    html {
+      scroll-behavior: auto;
+    }
+  }
 }
