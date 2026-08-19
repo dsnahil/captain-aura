@@ -108,10 +108,100 @@ export class AnthropicVisionProvider implements AppearanceVisionProvider {
   }
 }
 
-export function getVisionProvider(): AppearanceVisionProvider {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (key && process.env.VISION_PROVIDER !== "mock") {
-    return new AnthropicVisionProvider(new Anthropic({ apiKey: key }));
+/** Real garment recognition via Gemini, when a Google AI key is configured. */
+export class GeminiVisionProvider implements AppearanceVisionProvider {
+  readonly name = "gemini-vision";
+  readonly isMock = false;
+
+  constructor(
+    private apiKey: string,
+    private model = process.env.GEMINI_MODEL ?? "gemini-flash-lite-latest",
+  ) {}
+
+  async analyzeGarment(imageDataUrl: string): Promise<GarmentAnalysis> {
+    const match = imageDataUrl.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,(.+)$/);
+    if (!match) throw new Error("Unsupported image format");
+    const [, mimeType, data] = match;
+
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [
+              {
+                text:
+                  "You identify clothing items for a personal wardrobe app. Describe only the garment. " +
+                  "Never describe or infer anything about a person who may appear in the image.",
+              },
+            ],
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { inlineData: { mimeType, data } },
+                { text: "Identify this clothing item." },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                category: { type: "STRING", enum: CATEGORIES },
+                colour: { type: "STRING", enum: COLOURS },
+                material: { type: "STRING" },
+                formality: {
+                  type: "STRING",
+                  enum: ["very-casual", "casual", "smart-casual", "business", "formal"],
+                },
+                suggestedName: { type: "STRING" },
+                confidence: { type: "NUMBER" },
+              },
+              required: ["category", "colour", "suggestedName", "confidence"],
+            },
+          },
+        }),
+        signal: AbortSignal.timeout(25_000),
+      },
+    );
+
+    if (!res.ok) throw new Error(`gemini vision ${res.status}`);
+
+    const payload = await res.json();
+    const text = payload?.candidates?.[0]?.content?.parts
+      ?.map((p: { text?: string }) => p.text ?? "")
+      .join("");
+    if (!text) throw new Error("gemini vision returned nothing");
+
+    const json = JSON.parse(text.replace(/```json?|```/g, "").trim());
+
+    return {
+      category: CATEGORIES.includes(json.category) ? json.category : undefined,
+      colour: COLOURS.includes(json.colour) ? json.colour : undefined,
+      material: json.material,
+      formality: json.formality,
+      suggestedName: json.suggestedName,
+      // The user confirms regardless of how confident the model is.
+      requiresConfirmation: true,
+      confidence: Number(json.confidence ?? 0.5),
+    };
   }
+}
+
+export function getVisionProvider(): AppearanceVisionProvider {
+  if (process.env.VISION_PROVIDER === "mock") return new MockVisionProvider();
+
+  const gemini = process.env.GEMINI_API_KEY;
+  if (gemini) return new GeminiVisionProvider(gemini);
+
+  const anthropic = process.env.ANTHROPIC_API_KEY;
+  if (anthropic) return new AnthropicVisionProvider(new Anthropic({ apiKey: anthropic }));
+
   return new MockVisionProvider();
 }

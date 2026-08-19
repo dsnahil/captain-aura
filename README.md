@@ -81,8 +81,8 @@ touching the UI (`lib/providers/`):
 |---|---|---|
 | `WeatherProvider` | Open-Meteo (free, keyless) | deterministic mock, labelled as simulated |
 | `GeocodeProvider` | Open-Meteo geocoding (keyless) | built-in city list |
-| `RecommendationProvider` | Anthropic, if a key is set | rules engine (always) |
-| `AppearanceVisionProvider` | Anthropic vision, if a key is set | on-device colour detection + user confirmation |
+| `RecommendationProvider` | Gemini or Anthropic, if a key is set | rules engine (always) |
+| `AppearanceVisionProvider` | Gemini or Anthropic vision, if a key is set | on-device colour detection + user confirmation |
 
 All external calls happen in route handlers under `app/api/`. No key is ever
 referenced in client code.
@@ -91,6 +91,24 @@ referenced in client code.
 
 Every variable is optional — see `.env.example`. With no `.env.local` the app
 runs fully: rule-based recommendations plus live keyless weather.
+
+### The AI advisor
+
+Set `GEMINI_API_KEY` (free tier at [aistudio.google.com/apikey](https://aistudio.google.com/apikey))
+and recommendations come from Gemini instead of the rules engine, using native
+structured output so the response is guaranteed-parseable JSON.
+
+Two things learned the hard way and encoded in `GeminiRecommendationProvider`:
+
+- **Never pin a Gemini version.** `gemini-2.0-flash` and `gemini-2.5-flash` are
+  both already retired and return 404. Only `-latest` aliases are used.
+- **The big models get overloaded.** `gemini-flash-latest` returns 503 "high
+  demand" often enough to break a demo, so the default is
+  `gemini-flash-lite-latest` (~700ms) and the provider walks a fallback chain
+  of models on 503/429 before giving up.
+
+If every model fails, the rules engine answers instead and the UI says so
+rather than pretending the AI produced it.
 
 ## Accounts and sync (Firebase)
 

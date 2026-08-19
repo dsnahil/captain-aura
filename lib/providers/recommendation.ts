@@ -95,21 +95,16 @@ const AiRecommendationSchema = z.object({
   caveats: z.array(z.string()).default([]),
 });
 
-export class AIRecommendationProvider implements RecommendationProvider {
-  readonly name = "anthropic";
-  readonly isAI = true;
+/** The task instruction that follows the structured context brief. */
+function buildUserPrompt(ctx: AuraContext): string {
+  const extra =
+    ctx.situation.activity === "improvement"
+      ? '\n\nThis is a self-improvement request, not an event: return "plan" (3-5 prioritised steps) and leave "outfit" empty.'
+      : ctx.situation.activity === "travel"
+        ? '\n\nThis is a travel request: also return "packing" as a capsule packing list.'
+        : "";
 
-  constructor(private client: Anthropic) {}
-
-  async recommend(ctx: AuraContext): Promise<Recommendation> {
-    const res = await this.client.messages.create({
-      model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-5",
-      max_tokens: 2000,
-      system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: `${buildContextBrief(ctx)}
+  return `${buildContextBrief(ctx)}
 
 Respond with JSON in exactly this shape:
 {
@@ -127,64 +122,243 @@ Respond with JSON in exactly this shape:
   "missing": [{"slot":"outer","label":"Waterproof shell","why":"..."}],
   "nextMove": "One concrete action.",
   "caveats": ["Anything you genuinely did not know."]
-}${ctx.situation.activity === "improvement" ? '\n\nThis is a self-improvement request, not an event: return "plan" (3-5 prioritised steps) and leave "outfit" empty.' : ""}${ctx.situation.activity === "travel" ? '\n\nThis is a travel request: also return "packing" as a capsule packing list.' : ""}`,
-        },
-      ],
+}${extra}`;
+}
+
+/**
+ * Map a validated model response onto the app's Recommendation shape.
+ * Shared by every AI provider so they stay behaviourally identical.
+ */
+function toRecommendation(
+  parsed: z.infer<typeof AiRecommendationSchema>,
+  ctx: AuraContext,
+): Recommendation {
+  // Resolve owned item ids the model referenced back to real names. Anything
+  // it invents simply doesn't resolve, so it can't fake owning something.
+  const byId = new Map(ctx.wardrobe.map((w) => [w.id, w]));
+  const outfit = parsed.outfit.map((p) => {
+    const owned = p.ownedItemId ? byId.get(p.ownedItemId) : undefined;
+    return {
+      slot: p.slot,
+      label: p.label,
+      detail: p.detail,
+      ownedItemId: owned?.id,
+      ownedItemName: owned?.name,
+      colourSuggestion: p.colourSuggestion,
+    };
+  });
+
+  const usedItemIds = outfit.map((p) => p.ownedItemId).filter((x): x is string => !!x);
+
+  return {
+    title: parsed.title,
+    vibe: parsed.vibe,
+    approach: parsed.approach,
+    outfit,
+    plan: parsed.plan,
+    packing: parsed.packing,
+    palette: parsed.palette,
+    reasons: parsed.reasons,
+    weatherNote: parsed.weatherNote,
+    grooming: parsed.grooming,
+    socialNote: parsed.socialNote,
+    avoid: parsed.avoid,
+    wardrobeVerdict: {
+      status:
+        ctx.wardrobe.length === 0
+          ? "none"
+          : parsed.missing.length === 0
+            ? "complete"
+            : "partial",
+      headline: parsed.wardrobeHeadline,
+      usedItemIds,
+      missing: parsed.missing.map((m) => ({
+        slot: m.slot as Recommendation["outfit"][number]["slot"],
+        label: m.label,
+        why: m.why,
+        productOptions: [],
+      })),
+    },
+    nextMove: parsed.nextMove,
+    caveats: parsed.caveats,
+    engine: "ai",
+  };
+}
+
+export class AIRecommendationProvider implements RecommendationProvider {
+  readonly name = "anthropic";
+  readonly isAI = true;
+
+  constructor(private client: Anthropic) {}
+
+  async recommend(ctx: AuraContext): Promise<Recommendation> {
+    const res = await this.client.messages.create({
+      model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-5",
+      max_tokens: 2000,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: buildUserPrompt(ctx) }],
     });
 
     const text = res.content.find((c) => c.type === "text")?.text ?? "";
-    const json = JSON.parse(stripFences(text));
-    const parsed = AiRecommendationSchema.parse(json);
+    const parsed = AiRecommendationSchema.parse(JSON.parse(stripFences(text)));
+    return toRecommendation(parsed, ctx);
+  }
+}
 
-    // Resolve owned item ids the model referenced back to real names.
-    const byId = new Map(ctx.wardrobe.map((w) => [w.id, w]));
-    const outfit = parsed.outfit.map((p) => {
-      const owned = p.ownedItemId ? byId.get(p.ownedItemId) : undefined;
-      return {
-        slot: p.slot,
-        label: p.label,
-        detail: p.detail,
-        ownedItemId: owned?.id,
-        ownedItemName: owned?.name,
-        colourSuggestion: p.colourSuggestion,
-      };
+/* ============================================================================
+   GEMINI — Google AI Studio REST API. Uses native structured output, so the
+   response is guaranteed-parseable JSON rather than text we have to scrape.
+   ========================================================================== */
+
+const S = {
+  str: { type: "STRING" as const },
+  strArr: { type: "ARRAY" as const, items: { type: "STRING" as const } },
+};
+
+/** Gemini's responseSchema dialect (an OpenAPI subset). */
+const GEMINI_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    title: S.str,
+    vibe: S.str,
+    approach: S.str,
+    outfit: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          slot: {
+            type: "STRING",
+            enum: ["base", "mid", "outer", "bottom", "shoes", "accessory"],
+          },
+          label: S.str,
+          detail: S.str,
+          ownedItemId: S.str,
+          colourSuggestion: S.str,
+        },
+        required: ["slot", "label"],
+      },
+    },
+    plan: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: { title: S.str, detail: S.str, horizon: S.str },
+        required: ["title", "detail"],
+      },
+    },
+    packing: S.strArr,
+    palette: S.strArr,
+    reasons: S.strArr,
+    weatherNote: S.str,
+    grooming: {
+      type: "OBJECT",
+      properties: { hair: S.str, beard: S.str, fragrance: S.str, extra: S.str },
+    },
+    socialNote: S.str,
+    avoid: S.strArr,
+    wardrobeHeadline: S.str,
+    missing: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: { slot: S.str, label: S.str, why: S.str },
+        required: ["slot", "label", "why"],
+      },
+    },
+    nextMove: S.str,
+    caveats: S.strArr,
+  },
+  required: [
+    "title", "vibe", "approach", "outfit", "palette", "reasons",
+    "grooming", "avoid", "wardrobeHeadline", "missing", "nextMove", "caveats",
+  ],
+};
+
+/**
+ * Model preference order. Flash-lite is the default because it answers in
+ * well under a second and stays available, while the larger flash aliases
+ * routinely return 503 "high demand" on the free tier. The context brief does
+ * the heavy lifting here, so the smaller model loses very little.
+ *
+ * Only "latest" aliases are used: pinned Gemini versions get retired, and a
+ * hardcoded one silently 404s months later.
+ */
+const GEMINI_FALLBACK_MODELS = [
+  "gemini-flash-lite-latest",
+  "gemini-3.5-flash-lite",
+  "gemini-flash-latest",
+];
+
+export class GeminiRecommendationProvider implements RecommendationProvider {
+  readonly name = "gemini";
+  readonly isAI = true;
+  private readonly models: string[];
+
+  constructor(private apiKey: string, model = process.env.GEMINI_MODEL) {
+    // An explicitly configured model is tried first, then the standard chain.
+    this.models = model
+      ? [model, ...GEMINI_FALLBACK_MODELS.filter((m) => m !== model)]
+      : GEMINI_FALLBACK_MODELS;
+  }
+
+  async recommend(ctx: AuraContext): Promise<Recommendation> {
+    const body = JSON.stringify({
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: [{ role: "user", parts: [{ text: buildUserPrompt(ctx) }] }],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 4096,
+        responseMimeType: "application/json",
+        responseSchema: GEMINI_SCHEMA,
+      },
     });
 
-    const usedItemIds = outfit.map((p) => p.ownedItemId).filter((x): x is string => !!x);
+    let lastError = "";
 
-    return {
-      title: parsed.title,
-      vibe: parsed.vibe,
-      approach: parsed.approach,
-      outfit,
-      plan: parsed.plan,
-      packing: parsed.packing,
-      palette: parsed.palette,
-      reasons: parsed.reasons,
-      weatherNote: parsed.weatherNote,
-      grooming: parsed.grooming,
-      socialNote: parsed.socialNote,
-      avoid: parsed.avoid,
-      wardrobeVerdict: {
-        status:
-          ctx.wardrobe.length === 0
-            ? "none"
-            : parsed.missing.length === 0
-              ? "complete"
-              : "partial",
-        headline: parsed.wardrobeHeadline,
-        usedItemIds,
-        missing: parsed.missing.map((m) => ({
-          slot: m.slot as Recommendation["outfit"][number]["slot"],
-          label: m.label,
-          why: m.why,
-          productOptions: [],
-        })),
-      },
-      nextMove: parsed.nextMove,
-      caveats: parsed.caveats,
-      engine: "ai",
-    };
+    // 503 (overloaded) and 429 (rate limited) are per-model and transient, so
+    // move down the chain rather than dropping straight to the rules engine.
+    for (const model of this.models) {
+      let res: Response;
+      try {
+        res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": this.apiKey,
+            },
+            body,
+            signal: AbortSignal.timeout(15_000),
+          },
+        );
+      } catch (err) {
+        lastError = `${model}: ${(err as Error).name}`;
+        continue;
+      }
+
+      if (!res.ok) {
+        lastError = `${model}: ${res.status}`;
+        if (res.status === 503 || res.status === 429) continue;
+        throw new Error(`gemini ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      }
+
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts
+        ?.map((p: { text?: string }) => p.text ?? "")
+        .join("");
+
+      if (!text) {
+        lastError = `${model}: ${data?.candidates?.[0]?.finishReason ?? "empty"}`;
+        continue;
+      }
+
+      const parsed = AiRecommendationSchema.parse(JSON.parse(stripFences(text)));
+      return toRecommendation(parsed, ctx);
+    }
+
+    throw new Error(`gemini unavailable (${lastError})`);
   }
 }
 
@@ -318,11 +492,24 @@ export function buildContextBrief(ctx: AuraContext): string {
    FACTORY
    ========================================================================== */
 
+/**
+ * RECOMMENDATION_PROVIDER pins a specific engine ("rules" | "gemini" |
+ * "anthropic"). Otherwise the first configured key wins, and with no keys at
+ * all the deterministic engine runs.
+ */
 export function getRecommendationProvider(): RecommendationProvider {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (key && process.env.RECOMMENDATION_PROVIDER !== "rules") {
-    return new AIRecommendationProvider(new Anthropic({ apiKey: key }));
+  const pinned = process.env.RECOMMENDATION_PROVIDER;
+  const gemini = process.env.GEMINI_API_KEY;
+  const anthropic = process.env.ANTHROPIC_API_KEY;
+
+  if (pinned === "rules") return new RuleBasedRecommendationProvider();
+  if (pinned === "gemini" && gemini) return new GeminiRecommendationProvider(gemini);
+  if (pinned === "anthropic" && anthropic) {
+    return new AIRecommendationProvider(new Anthropic({ apiKey: anthropic }));
   }
+
+  if (gemini) return new GeminiRecommendationProvider(gemini);
+  if (anthropic) return new AIRecommendationProvider(new Anthropic({ apiKey: anthropic }));
   return new RuleBasedRecommendationProvider();
 }
 
