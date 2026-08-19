@@ -2,6 +2,12 @@
 
 **Know how to show up.**
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdsnahil%2Fcaptain-aura)
+
+Deploys as-is with **no environment variables** — recommendations come from the
+built-in rules engine and weather is live via keyless Open-Meteo. Accounts and
+AI are opt-in extras (see below).
+
 A context-aware personal appearance advisor for men. You tell it what you're
 doing — in your own words — and it combines your profile, your build, your
 style, your wardrobe, your past feedback, the activity, the people, the date
